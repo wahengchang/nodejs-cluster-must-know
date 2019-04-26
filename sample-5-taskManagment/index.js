@@ -18,11 +18,32 @@ Array.prototype.removeElement = function(condition = {}){
   return
 }
 
+function random(min = 1, max=3) {
+  return Math.random() * (max - min) + min;
+}
+
 if (cluster.isMaster) {
-  require('./master')(function(){
+  const BaseMaster = require('./master')
+  const taskPool = [
+    {spendTime: random()},
+    {spendTime: random()},
+    {spendTime: random()},
+    {spendTime: random()},
+    {spendTime: random()},
+  ]
+  const bm = new BaseMaster(taskPool, function(){
     console.log('[INFO] process done')
     process.exit();
   })
+  bm.doneTaskCondition = function(msg){
+    const {id, taskInfo} = msg
+    if (id && taskInfo && taskInfo.spendTime) {
+      return true
+    }
+    return false
+  }
+  bm.init()
+  
 } else {
   require('./worker')()
 }

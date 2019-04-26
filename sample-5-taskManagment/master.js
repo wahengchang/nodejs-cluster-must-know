@@ -1,36 +1,33 @@
 const cluster = require('cluster');
 const numCPUs = require('os').cpus().length;
 const TaskManager = require('./utils/TaskManager')
+const {exitHandler} = require('./utils/clusterHelper')
 
-function random(min = 1, max=3) {
-  return Math.random() * (max - min) + min;
-}
+console.log(`[INFO] Master ${process.pid} is running`);
 
-module.exports = function(cb){
-  let dieChild = 0
-  const freeChild = []
-  const busyChild = []
-  const taskPool = [
-    {spendTime: random()},
-    {spendTime: random()},
-    {spendTime: random()},
-    {spendTime: random()},
-    {spendTime: random()},
-  ]
-  const tm = new TaskManager(taskPool)
-  console.log(`[INFO] Master ${process.pid} is running`);
-
+const forking = () => {
   for (let i = 0; i < numCPUs; i++) {
     console.log(`[INFO] Forking process number ${i}...`);
     cluster.fork();
   }
+}
 
-  // init worker
-  for (const id in cluster.workers) {
-    freeChild.push(cluster.workers[id])
+class BaseMaster {
+  constructor(taskPool = [], cb){
+    this.taskPool = taskPool
+    this.tm = new TaskManager(taskPool)
+    this.cb = cb
+    this.freeChild = []
+    this.busyChild = []
   }
-
-  const assignTask = (freeChild, busyChild, tm) => {
+  initWorker() {
+    // init worker
+    for (const id in cluster.workers) {
+      this.freeChild.push(cluster.workers[id])
+    }
+  }
+  assignTask() {
+    const {freeChild, busyChild, tm} = this
     // init task
     console.log(`[INFO] assignTask(), there are ${freeChild.length} freeChild`)
     console.log(`[INFO] assignTask(), there are ${busyChild.length} busyChild`)
@@ -45,44 +42,47 @@ module.exports = function(cb){
     }
   }
 
-  assignTask(freeChild, busyChild, tm)
-  // recieve done message
-  for (const id in cluster.workers) {
-    const msgHandler = (processId) => (msg) => {
-      const {id: taskId, taskInfo} = msg
-      const {spendTime } = taskInfo
-      const _process = cluster.workers[processId]
-
-      if (taskId && spendTime) {
-        tm.finishTask(taskId)
-        freeChild.push(_process)
-
-        busyChild.removeElement({id: processId})
-        
-        if(tm.count() <=0) {
-          console.log('[INFO] -=-=-=-= all task done -=-=-=-=')
-          return process.exit()
-        }
-        console.log(`[INFO] messageHandler child[${processId}] spend ${spendTime} s`)
-        assignTask(freeChild, busyChild, tm)
-      }
+  removeDoneTask(msg, processId) {
+    const {id: taskId} = msg
+    const {freeChild, busyChild, tm} = this
+    const _process = cluster.workers[processId]
+    tm.finishTask(taskId)
+    freeChild.push(_process)
+    busyChild.removeElement({id: processId})
+    
+    if(tm.count() <=0) {
+      console.log('[INFO] -=-=-=-= all task done -=-=-=-=')
+      return process.exit()
     }
-    cluster.workers[id].on('message', msgHandler(id));
   }
 
-  cluster.on('exit', (worker, code, signal) => {
-    dieChild +=1 
-    if (signal) {
-      console.log(`[INFO] master: worker was killed by signal: ${signal}`);
-    } else if (code !== 0) {
-      console.log(`[INFO] master: worker exited with error code: ${code}`);
-    } else {
-      console.log('[INFO] master: worker success!');
-    }
+  doneTaskCondition(msg) {
+    return true
+  }
 
-    if(dieChild >= numCPUs){
-      console.log('[INFO] master: all child process is die!');
-      cb()
+  msgHandler(processId){
+    return function(msg){
+      const {freeChild, busyChild, tm} = this
+      if (this.doneTaskCondition(msg)) {
+        this.removeDoneTask.bind(this)(msg, processId)
+        this.assignTask(freeChild, busyChild, tm)
+      }
     }
-  });
+  }
+
+  init(){
+    const {freeChild, busyChild, tm, msgHandler} = this
+    forking()
+    this.initWorker()
+    this.assignTask(freeChild, busyChild, tm)
+
+    // init handler
+    cluster.on('exit', exitHandler());
+
+    for (const id in cluster.workers) {
+      cluster.workers[id].on('message', msgHandler(id).bind(this));
+    }
+  }
 }
+
+module.exports = BaseMaster
