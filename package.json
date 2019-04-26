@@ -1,0 +1,8 @@
+{
+  "name": "nodejs-cluster-must-know",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": "git@github.com:wahengchang/nodejs-cluster-must-know.git",
+  "author": "waheng chang <wahengchang@gmail.com>",
+  "license": "MIT"
+}
